@@ -1,5 +1,6 @@
 #!/usr/bin/env
 
+import base64
 import jasypt4py
 import MySQLdb
 import sys
@@ -25,7 +26,7 @@ class JamfPro:
 
     # There are hard-coded in the Jamf Pro software (PasswordServiceImpl.class and PasswordServiceImpl$Encrypter.class)
     self.storage_key  = '2M#84->)y^%2kGmN97ZLfhbL|-M:j?'
-    self.salt         = '\xA9\x9B\xC8\x32\x56\x35\xE3\x03'
+    self.salt         = b'\xA9\x9B\xC8\x32\x56\x35\xE3\x03'
     self.iterations   = 19
 
     # Set database config
@@ -84,7 +85,7 @@ class JamfPro:
 
     # Get encrypted session key from database
     self.db_cursor.execute(
-      'SELECT encryption_key, encryption_type FROM encryption_key;'
+      'SELECT FROM_BASE64(encryption_key), encryption_type FROM encryption_key;'
     )
 
     # See if it's there
@@ -105,7 +106,7 @@ class JamfPro:
       )
 
     # Decrypt the session key
-    enc_session_key = result['encryption_key'].decode('base64')
+    enc_session_key = result['FROM_BASE64(encryption_key)']
 
     session_key = self.decrypt(
       enc_session_key,
@@ -117,7 +118,7 @@ class JamfPro:
   def decrypt(self, cipher_text, password=None):
     
     if not password:
-      password = self.session_key
+      password = self.session_key.decode("utf-8")
 
     # Generate key and IV
     generator = jasypt4py.generator.PKCS12ParameterGenerator(SHA256)
@@ -205,18 +206,14 @@ def dump_data(jamf):
   )
 
   tables = [row['Tables_in_{}'.format(jamf.db_name)] for row in jamf.db_cursor.fetchall()]
-
   for table in tables:
-   
     jamf.db_cursor.execute(
-      'SELECT * FROM {}'.format(
+      'SHOW COLUMNS FROM {}'.format(
         table
       )
     )
-    
     if jamf.db_cursor.rowcount > 0:
-      columns = [row[0] for row in jamf.db_cursor.description]
-
+      columns = [row['Field'] for row in jamf.db_cursor]    
       # Check if this table is worth spending time on
       for column in columns:
         CONTAINS_ENCRYPTED_DATA = False
@@ -227,6 +224,11 @@ def dump_data(jamf):
       if not CONTAINS_ENCRYPTED_DATA:
         continue
       else:
+        jamf.db_cursor.execute(
+          'SELECT * FROM {}'.format(
+            table
+          )
+        ) 
         print_info(
           'Found encrypted data in table "{0}", decrypting..'.format(
             table
@@ -237,7 +239,7 @@ def dump_data(jamf):
         os.path.basename(table)
       )
 
-      with open(html_filename, 'wb') as html_file:
+      with open(html_filename, 'w') as html_file:
         
         html_file.write(
           '<!DOCTYPE html>\n<html>\n\t<head>\n\t\t<meta charset="UTF-8">\n\t{0}</head>\n\t<body>\n\t\t<table>\n\t\t\t<tbody>\n\t\t\t\t<tr>\n'.format(
@@ -277,14 +279,14 @@ def dump_data(jamf):
             if column.endswith('_encrypted'):
               html_file.write(
                '\t\t\t\t\t<td>{0}</td>\n'.format(
-                  jamf.decrypt(row[column].decode('base64'))
+                  jamf.decrypt(base64.b64decode(row[column]))
                 )
               )
             else:
               try:
                 html_file.write(
                   '\t\t\t\t\t<td>{0}</td>\n'.format(
-                    str(row[column]).decode('ascii')
+                    str(row[column])
                   )
                 )
               except UnicodeDecodeError:
