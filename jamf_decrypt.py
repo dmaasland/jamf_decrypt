@@ -1,12 +1,12 @@
 #!/usr/bin/env
 
 import base64
-import jasypt4py
-import MySQLdb
 import sys
 import os
 
-from MySQLdb import cursors
+import jasypt4py
+import mysql.connector
+
 from Cryptodome.Hash import SHA256
 from Cryptodome.Cipher import AES
 from Cryptodome.Util import Padding
@@ -47,15 +47,15 @@ class JamfPro:
     )
 
     try:
-      self.db=MySQLdb.connect(
-        user=self.db_user,
-        passwd=self.db_pass,
-        db=self.db_name,
-        host=self.db_host,
-        cursorclass=cursors.DictCursor
+      self.db_connection = mysql.connector.MySQLConnection(
+          host = self.db_host,
+          user = self.db_user,
+          password = self.db_pass,
+          db = self.db_name,
+          port = self.port
       )
-    
-    except MySQLdb.OperationalError as e:
+
+    except mysql.connector.errors.OperationalError as e:
       print_error(
         'Database connection failed: {0}'.format(e),
         exit_code=1
@@ -68,7 +68,9 @@ class JamfPro:
     )
 
     # Get a cursor
-    self.db_cursor = self.db.cursor()
+    self.db_cursor = self.db_connection.cursor(
+      buffered=True, dictionary=True
+    )
 
     # Get the decrypted session key
     print_info(
@@ -95,21 +97,18 @@ class JamfPro:
         exit_code=2
       )
 
-    result = self.db_cursor.fetchone()
+    encryption_key, encryption_type = self.db_cursor.fetchone()
 
     # Check if it's AES
-    encryption_method = result['encryption_type']
-    if encryption_method != 1:
+    if encryption_type != 1:
       print_error(
         'Unsupported encryption method',
         exit_code=3
       )
 
     # Decrypt the session key
-    enc_session_key = result['FROM_BASE64(encryption_key)']
-
     session_key = self.decrypt(
-      enc_session_key,
+      encryption_key,
       self.storage_key
     )
 
@@ -275,13 +274,24 @@ def dump_data(jamf):
           )
 
           for column in columns:
+            column_index = columns.index(column)
 
             if column.endswith('_encrypted'):
-              html_file.write(
-               '\t\t\t\t\t<td>{0}</td>\n'.format(
-                  jamf.decrypt(base64.b64decode(row[column]))
+
+              if row[column_index]:
+                decrypted_contents = jamf.decrypt(
+                  base64.b64decode(row[column_index])
                 )
-              )
+
+                if column.find("key") != -1:
+                  decrypted_contents = base64.b64encode(decrypted_contents)
+
+                decrypted_contents = (decrypted_contents).decode()
+                html_file.write(
+                  '\t\t\t\t\t<td>{0}</td>\n'.format(decrypted_contents)
+                )
+              else:
+                html_file.write(f"\t\t\t\t\t<td></td>\n")
             else:
               try:
                 html_file.write(
