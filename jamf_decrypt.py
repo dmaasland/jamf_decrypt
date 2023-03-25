@@ -97,21 +97,18 @@ class JamfPro:
         exit_code=2
       )
 
-    result = self.db_cursor.fetchone()
+    encryption_key, encryption_type = self.db_cursor.fetchone()
 
     # Check if it's AES
-    encryption_method = result['encryption_type']
-    if encryption_method != 1:
+    if encryption_type != 1:
       print_error(
         'Unsupported encryption method',
         exit_code=3
       )
 
     # Decrypt the session key
-    enc_session_key = result['FROM_BASE64(encryption_key)']
-
     session_key = self.decrypt(
-      enc_session_key,
+      encryption_key,
       self.storage_key
     )
 
